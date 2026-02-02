@@ -1,1 +1,160 @@
 
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Domino Master Fix</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #020a04; touch-action: none; font-family: sans-serif; }
+        #ui { position: absolute; top: 15px; width: 100%; display: flex; justify-content: space-between; padding: 0 20px; box-sizing: border-box; pointer-events: none; z-index: 10; }
+        .pill { background: rgba(0,0,0,0.8); color: #ffd700; padding: 8px 15px; border-radius: 20px; border: 1px solid #ffd700; font-size: 12px; font-weight: bold; }
+        #msg { position: absolute; bottom: 160px; width: 100%; text-align: center; color: white; text-shadow: 2px 2px 4px #000; pointer-events: none; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div class="pill">💰 28.5M</div>
+        <div id="status" class="pill">دورك الآن</div>
+        <div class="pill">💸 1K</div>
+    </div>
+    <div id="msg">اسحب الحجر للمكان المناسب</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 18, 12); camera.lookAt(0, -2, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // إضاءة قوية لإظهار التجسيم
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+        const light = new THREE.DirectionalLight(0xffffff, 0.8);
+        light.position.set(5, 15, 5); light.castShadow = true;
+        scene.add(light);
+
+        // الطاولة
+        const table = new THREE.Mesh(new THREE.PlaneGeometry(30, 40), new THREE.MeshStandardMaterial({ color: 0x125424 }));
+        table.rotation.x = -Math.PI / 2; table.receiveShadow = true;
+        scene.add(table);
+
+        const T_W = 0.9, T_H = 0.25, T_L = 1.8;
+        let playerHand = [], boardTiles = [], selectedTile = null;
+        let leftEdge = { x: -0.9, val: 6 }, rightEdge = { x: 0.9, val: 6 };
+
+        function createTile(v1, v2, x, z, isHand = false) {
+            const group = new THREE.Group();
+            const body = new THREE.Mesh(new THREE.BoxGeometry(T_W, T_H, T_L), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+            body.castShadow = true; group.add(body);
+
+            // خط المنتصف
+            const line = new THREE.Mesh(new THREE.PlaneGeometry(T_W, 0.04), new THREE.MeshBasicMaterial({color: 0x000}));
+            line.rotation.x = -Math.PI/2; line.position.y = T_H/2 + 0.01; group.add(line);
+
+            const dotGeo = new THREE.CircleGeometry(0.08, 12);
+            const dotMat = new THREE.MeshBasicMaterial({ color: 0x000 });
+            const drawPips = (val, oz) => {
+                const p = [];
+                if(val%2!==0) p.push([0,0]);
+                if(val>=2) p.push([0.22, 0.25], [-0.22, -0.25]);
+                if(val>=4) p.push([0.22, -0.25], [-0.22, 0.25]);
+                if(val===6) p.push([0.22, 0], [-0.22, 0]);
+                p.forEach(pos => {
+                    const d = new THREE.Mesh(dotGeo, dotMat);
+                    d.rotation.x = -Math.PI/2; d.position.set(pos[0], T_H/2 + 0.02, oz + pos[1]);
+                    group.add(d);
+                });
+            };
+            drawPips(v1, 0.45); drawPips(v2, -0.45);
+
+            group.position.set(x, T_H/2, z);
+            group.userData = { v1, v2, isHand, ox: x, oz: z, isDouble: (v1 === v2) };
+            
+            // لو "دبل" يظهر واقف رأسي في اليد
+            if(isHand && group.userData.isDouble) group.rotation.y = 0;
+
+            scene.add(group);
+            if(isHand) playerHand.push(group);
+            return group;
+        }
+
+        // توزيع عشوائي لليد
+        for(let i=0; i<7; i++) {
+            createTile(Math.floor(Math.random()*7), Math.floor(Math.random()*7), -3.5 + (i*1.1), 7.5, true);
+        }
+        // حجر السنتر (6-6)
+        createTile(6, 6, 0, 0, false);
+
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        window.addEventListener('touchstart', e => {
+            mouse.x = (e.touches[0].clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.touches[0].clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const hits = raycaster.intersectObjects(playerHand, true);
+            if(hits.length > 0) {
+                let obj = hits[0].object; while(obj.parent && obj.type !== 'Group') obj = obj.parent;
+                selectedTile = obj;
+            }
+        });
+
+        window.addEventListener('touchmove', e => {
+            if(!selectedTile) return;
+            mouse.x = (e.touches[0].clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.touches[0].clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const ground = raycaster.intersectObject(table);
+            if(ground.length > 0) {
+                selectedTile.position.set(ground[0].point.x, 0.8, ground[0].point.z);
+            }
+        });
+
+        window.addEventListener('touchend', () => {
+            if(!selectedTile) return;
+            const pos = selectedTile.position;
+            let snapped = false;
+
+            // التوصيل بجهة اليمين
+            if(pos.x > 0 && pos.distanceTo(new THREE.Vector3(rightEdge.x, 0, 0)) < 3) {
+                snapTile('right');
+                snapped = true;
+            } 
+            // التوصيل بجهة اليسار
+            else if(pos.x < 0 && pos.distanceTo(new THREE.Vector3(leftEdge.x, 0, 0)) < 3) {
+                snapTile('left');
+                snapped = true;
+            }
+
+            if(!snapped) {
+                selectedTile.position.set(selectedTile.userData.ox, T_H/2, selectedTile.userData.oz);
+                selectedTile.rotation.y = 0;
+            }
+            selectedTile = null;
+        });
+
+        function snapTile(side) {
+            const isDouble = selectedTile.userData.isDouble;
+            if(side === 'right') {
+                selectedTile.position.set(rightEdge.x + (isDouble ? T_W : T_L/2 + 0.1), T_H/2, 0);
+                selectedTile.rotation.y = isDouble ? 0 : Math.PI/2;
+                rightEdge.x = selectedTile.position.x + (isDouble ? T_W/2 : T_L/2);
+            } else {
+                selectedTile.position.set(leftEdge.x - (isDouble ? T_W : T_L/2 + 0.1), T_H/2, 0);
+                selectedTile.rotation.y = isDouble ? 0 : Math.PI/2;
+                leftEdge.x = selectedTile.position.x - (isDouble ? T_W/2 : T_L/2);
+            }
+            playerHand = playerHand.filter(t => t !== selectedTile);
+            selectedTile.userData.isHand = false;
+        }
+
+        function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); }
+        animate();
+    </script>
+</body>
+</html>
