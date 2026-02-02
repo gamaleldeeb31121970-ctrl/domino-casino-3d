@@ -1,1 +1,195 @@
 
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Domino Master Elite</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #020a04; touch-action: none; font-family: sans-serif; }
+        #ui { position: absolute; top: 15px; width: 100%; display: flex; justify-content: space-between; padding: 0 25px; box-sizing: border-box; pointer-events: none; z-index: 10; }
+        .pill { background: linear-gradient(180deg, #2c3e50, #000); color: #ffd700; padding: 10px 18px; border-radius: 25px; border: 2px solid #ffd700; font-weight: bold; font-size: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+        #msg { position: absolute; bottom: 160px; width: 100%; text-align: center; color: #fff; text-shadow: 2px 2px 5px #000; font-weight: bold; pointer-events: none; transition: 0.3s; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div class="pill">💰 28.5M</div>
+        <div class="pill" id="status">دورك الآن</div>
+        <div class="pill">💸 1K</div>
+    </div>
+    <div id="msg">اسحب الحجر للمنتصف</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // --- الإعدادات الأساسية ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 22, 14);
+        camera.lookAt(0, -3, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true; // تفعيل الظلال
+        document.body.appendChild(renderer.domElement);
+
+        // --- الإضاءة (لجعل الحجر يلمع) ---
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        const spotLight = new THREE.SpotLight(0xffffff, 0.8);
+        spotLight.position.set(0, 20, 10);
+        spotLight.castShadow = true;
+        scene.add(spotLight);
+
+        // --- الطاولة (تصميم محدد) ---
+        const tableGroup = new THREE.Group();
+        const tableBase = new THREE.Mesh(new THREE.BoxGeometry(22, 1, 32), new THREE.MeshStandardMaterial({ color: 0x1a5e20, roughness: 0.8 }));
+        tableBase.position.y = -0.5;
+        tableBase.receiveShadow = true;
+        tableGroup.add(tableBase);
+
+        // إطار الطاولة (الخشب)
+        const frameMat = new THREE.MeshStandardMaterial({ color: 0x3e2723, metalness: 0.4, roughness: 0.5 });
+        const frameLeft = new THREE.Mesh(new THREE.BoxGeometry(1, 1.2, 32), frameMat);
+        frameLeft.position.set(-11.5, -0.4, 0);
+        tableGroup.add(frameLeft);
+        const frameRight = frameLeft.clone(); frameRight.position.x = 11.5;
+        tableGroup.add(frameRight);
+        scene.add(tableGroup);
+
+        // --- متغيرات الدومينو ---
+        const T_W = 1.0, T_H = 0.28, T_L = 2.0; // أبعاد أكبر قليلاً للتجسيم
+        let playerHand = [], boardTiles = [], selectedTile = null;
+        let leftX = -T_L/2, rightX = T_L/2;
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        // --- دالة إنشاء الحجر المجسم ---
+        function createProTile(v1, v2) {
+            const group = new THREE.Group();
+            
+            // مادة الحجر (بلاستيك عاجي مع لمعة)
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.1, metalness: 0.05 });
+            const body = new THREE.Mesh(new THREE.BoxGeometry(T_W, T_H, T_L), bodyMat);
+            body.castShadow = true;
+            group.add(body);
+
+            // خط التقسيم الذهبى أو الأسود
+            const line = new THREE.Mesh(new THREE.BoxGeometry(T_W + 0.01, 0.04, 0.06), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+            line.position.y = T_H/2 + 0.01;
+            group.add(line);
+
+            // رسم النقاط (احترافي)
+            const dotGeo = new THREE.SphereGeometry(0.1, 16, 16);
+            const dotMat = new THREE.MeshStandardMaterial({ color: 0x000000, roughness: 0 });
+            
+            const drawPips = (val, zOffset) => {
+                const positions = {
+                    1: [[0,0]], 2: [[0.25, 0.3], [-0.25, -0.3]],
+                    3: [[0,0], [0.25, 0.3], [-0.25, -0.3]],
+                    4: [[0.25, 0.3], [-0.25, -0.3], [0.25, -0.3], [-0.25, 0.3]],
+                    5: [[0,0], [0.25, 0.3], [-0.25, -0.3], [0.25, -0.3], [-0.25, 0.3]],
+                    6: [[0.25, 0.3], [-0.25, -0.3], [0.25, -0.3], [-0.25, 0.3], [0.25, 0], [-0.25, 0]]
+                };
+                if(positions[val]) {
+                    positions[val].forEach(p => {
+                        const d = new THREE.Mesh(dotGeo, dotMat);
+                        d.position.set(p[0], T_H/2, zOffset + p[1]);
+                        group.add(d);
+                    });
+                }
+            };
+            drawPips(v1, 0.5); drawPips(v2, -0.5);
+            return group;
+        }
+
+        // --- توزيع الحجارة ---
+        function setupHand() {
+            for(let i=0; i<7; i++) {
+                const tile = createProTile(i, (i+1)%7);
+                tile.userData = { isHand: true, v1: i, v2: (i+1)%7, index: i };
+                scene.add(tile);
+                playerHand.push(tile);
+            }
+            arrangeHand();
+        }
+
+        function arrangeHand() {
+            playerHand.forEach((tile, i) => {
+                const spacing = 1.2;
+                const startX = -(playerHand.length - 1) * spacing / 2;
+                tile.position.set(startX + i * spacing, 0.2, 9); // مرصوصة في الأسفل
+                tile.rotation.set(-0.5, 0, 0); // مائلة قليلاً للاعب
+                tile.userData.ox = tile.position.x;
+                tile.userData.oz = tile.position.z;
+            });
+        }
+
+        // حجر السنتر البداية
+        const startTile = createProTile(6, 6);
+        startTile.position.set(0, T_H/2, 0);
+        scene.add(startTile);
+
+        // --- التفاعل ---
+        window.addEventListener('touchstart', e => {
+            mouse.x = (e.touches[0].clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.touches[0].clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const hits = raycaster.intersectObjects(playerHand, true);
+            if(hits.length > 0) {
+                let obj = hits[0].object;
+                while(obj.parent && !obj.userData.isHand) obj = obj.parent;
+                selectedTile = obj;
+                selectedTile.rotation.set(0, 0, 0); // تعديل الزاوية عند المسك
+            }
+        });
+
+        window.addEventListener('touchmove', e => {
+            if(!selectedTile) return;
+            mouse.x = (e.touches[0].clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.touches[0].clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const ground = raycaster.intersectObject(tableBase);
+            if(ground.length > 0) {
+                selectedTile.position.set(ground[0].point.x, 1.2, ground[0].point.z);
+            }
+        });
+
+        window.addEventListener('touchend', () => {
+            if(!selectedTile) return;
+            
+            const distR = selectedTile.position.distanceTo(new THREE.Vector3(rightX, 0, 0));
+            const distL = selectedTile.position.distanceTo(new THREE.Vector3(leftX, 0, 0));
+            
+            if(distR < 3.5) {
+                // التصاق أوتوماتيكي لليمين
+                selectedTile.position.set(rightX + T_L/2, T_H/2, 0);
+                selectedTile.rotation.y = Math.PI / 2;
+                rightX += T_L;
+                finalizeMove();
+            } else if(distL < 3.5) {
+                // التصاق أوتوماتيكي لليسار
+                selectedTile.position.set(leftX - T_L/2, T_H/2, 0);
+                selectedTile.rotation.y = Math.PI / 2;
+                leftX -= T_L;
+                finalizeMove();
+            } else {
+                // رجوع لليد
+                arrangeHand();
+            }
+            selectedTile = null;
+        });
+
+        function finalizeMove() {
+            selectedTile.userData.isHand = false;
+            playerHand = playerHand.filter(t => t !== selectedTile);
+            arrangeHand();
+            document.getElementById('msg').innerText = "تم وضع الحجر بنجاح!";
+        }
+
+        setupHand();
+        function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); }
+        animate();
+    </script>
+</body>
+</html>
