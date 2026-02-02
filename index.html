@@ -1,1 +1,183 @@
 
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Domino Elite 3D</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; touch-action: none; font-family: sans-serif; }
+        #ui-overlay { position: absolute; top: 10px; width: 100%; display: flex; justify-content: space-between; padding: 0 20px; box-sizing: border-box; pointer-events: none; z-index: 100; }
+        .stat { background: rgba(0,0,0,0.8); color: #ffd700; padding: 8px 15px; border-radius: 20px; border: 1px solid #ffd700; font-weight: bold; font-size: 14px; }
+        #msg { position: absolute; bottom: 20px; width: 100%; text-align: center; color: #fff; font-weight: bold; text-shadow: 2px 2px 4px #000; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div id="ui-overlay">
+        <div class="stat">الخصم: <span id="ai-count">7</span></div>
+        <div class="stat" id="turn-info">دورك</div>
+        <div class="stat">أنت: <span id="p-count">7</span></div>
+    </div>
+    <div id="msg">اسحب الحجر للعب</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // --- 1. هندسة الصوت (رنة الزلط الحادة) ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playStoneClack() {
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            osc.type = 'square'; osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.04);
+            g.gain.setValueAtTime(0.2, audioCtx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.08);
+            osc.connect(g); g.connect(audioCtx.destination);
+            osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+        }
+
+        // --- 2. إعداد المشهد الـ 3D ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 15, 12); camera.lookAt(0, -2, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // إضاءة لإظهار الملمس
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+        const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+        sun.position.set(5, 15, 10); sun.castShadow = true;
+        scene.add(sun);
+
+        // الطاولة والبرواز المحمر
+        const table = new THREE.Mesh(new THREE.BoxGeometry(30, 0.2, 20), new THREE.MeshStandardMaterial({ color: 0x073310 }));
+        table.receiveShadow = true; scene.add(table);
+        const frameMat = new THREE.MeshStandardMaterial({ color: 0x420a0a, roughness: 0.1, metalness: 0.3 });
+        const f1 = new THREE.Mesh(new THREE.BoxGeometry(31, 1, 0.8), frameMat); f1.position.set(0, 0.4, 10); scene.add(f1);
+        const f2 = new THREE.Mesh(new THREE.BoxGeometry(31, 1, 0.8), frameMat); f2.position.set(0, 0.4, -10); scene.add(f2);
+
+        // --- 3. مصنع الحجارة العاجية (Ivory Build) ---
+        let playerHand = [], aiHand = [], isPlayerTurn = true;
+        let edges = { l: {x: -1.2, v: 6}, r: {x: 1.2, v: 6} };
+
+        function createTile(v1, v2, x, z, owner) {
+            const group = new THREE.Group();
+            // الحجر الأساسي (أبيض عاجي)
+            const body = new THREE.Mesh(
+                new THREE.BoxGeometry(1, 0.28, 2),
+                new THREE.MeshStandardMaterial({ color: 0xfdfdf5, roughness: 0.05 })
+            );
+            body.castShadow = true; group.add(body);
+
+            // خط التقسيم الأسود
+            const line = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.05), new THREE.MeshBasicMaterial({color:0x000}));
+            line.rotation.x = -Math.PI/2; line.position.y = 0.141; group.add(line);
+
+            // المسمار الذهبي في المنتصف
+            const pivot = new THREE.Mesh(new THREE.SphereGeometry(0.06, 16, 16), new THREE.MeshStandardMaterial({color:0xdaa520, metalness:1}));
+            pivot.position.y = 0.15; group.add(pivot);
+
+            // رسم النقاط (تظهر فقط للاعب أو على الطاولة)
+            if(owner !== 'ai') {
+                const drawPips = (val, zOff) => {
+                    const g=0.3; let p=[];
+                    if(val%2!==0) p.push([0,0]); if(val>=2) p.push([g,g], [-g,-g]); if(val>=4) p.push([-g,g], [g,-g]); if(val===6) p.push([g,0], [-g,0]);
+                    p.forEach(pos => {
+                        const d = new THREE.Mesh(new THREE.SphereGeometry(0.09, 12, 12), new THREE.MeshStandardMaterial({color:0x000}));
+                        d.position.set(pos[0], 0.14, zOff+pos[1]); group.add(d);
+                    });
+                };
+                drawPips(v1, 0.5); drawPips(v2, -0.5);
+            } else {
+                body.position.y = -0.1; // لتمييز ظهر الحجر للخصم
+            }
+
+            group.position.set(x, 0.2, z);
+            group.userData = { v1, v2, owner, ox:x, oz:z, isD:v1===v2 };
+            scene.add(group);
+            return group;
+        }
+
+        // توزيع الحجارة
+        const tiles = []; for(let i=0; i<=6; i++) for(let j=i; j<=6; j++) tiles.push([i,j]);
+        tiles.sort(() => Math.random() - 0.5);
+        for(let i=0; i<7; i++) playerHand.push(createTile(...tiles.pop(), -6+(i*1.8), 7, 'player'));
+        for(let i=0; i<7; i++) aiHand.push(createTile(...tiles.pop(), -6+(i*1.8), -7, 'ai'));
+        createTile(6, 6, 0, 0, 'board');
+
+        // --- 4. ذكاء الخصم (AI) ---
+        function aiTurn() {
+            if(isPlayerTurn) return;
+            document.getElementById('turn-info').innerText = "الخصم يفكر...";
+            setTimeout(() => {
+                let pIdx = aiHand.findIndex(t => t.userData.v1 === edges.l.v || t.userData.v2 === edges.l.v || t.userData.v1 === edges.r.v || t.userData.v2 === edges.r.v);
+                if(pIdx !== -1) {
+                    let t = aiHand[pIdx];
+                    // إظهار النقاط عند اللعب
+                    const line = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.05), new THREE.MeshBasicMaterial({color:0x000}));
+                    line.rotation.x = -Math.PI/2; line.position.y = 0.141; t.add(line);
+                    
+                    if(t.userData.v1 === edges.r.v || t.userData.v2 === edges.r.v) snap(t, 'r'); else snap(t, 'l');
+                    aiHand.splice(pIdx, 1);
+                    document.getElementById('ai-count').innerText = aiHand.length;
+                    playStoneClack();
+                }
+                isPlayerTurn = true;
+                document.getElementById('turn-info').innerText = "دورك الآن";
+            }, 1200);
+        }
+
+        // --- 5. التحكم باللمس ---
+        let sel = null; const ray = new THREE.Raycaster(); const mouse = new THREE.Vector2();
+        window.addEventListener('touchstart', e => {
+            if(!isPlayerTurn) return;
+            const t = e.touches[0];
+            mouse.x = (t.clientX/window.innerWidth)*2-1; mouse.y = -(t.clientY/window.innerHeight)*2+1;
+            ray.setFromCamera(mouse, camera);
+            const hits = ray.intersectObjects(playerHand, true);
+            if(hits.length > 0) {
+                let o = hits[0].object; while(o.parent && o.userData.owner!=='player') o = o.parent;
+                sel = o; sel.position.y = 1;
+            }
+        });
+        window.addEventListener('touchmove', e => {
+            if(!sel) return;
+            const t = e.touches[0];
+            mouse.x = (t.clientX/window.innerWidth)*2-1; mouse.y = -(t.clientY/window.innerHeight)*2+1;
+            ray.setFromCamera(mouse, camera);
+            const h = ray.intersectObject(table);
+            if(h.length > 0) sel.position.set(h[0].point.x, 0.8, h[0].point.z);
+        });
+        window.addEventListener('touchend', () => {
+            if(!sel) return;
+            let played = false; const p = sel.position;
+            if(p.distanceTo(new THREE.Vector3(edges.r.x, 0, 0)) < 3) { snap(sel, 'r'); played = true; }
+            else if(p.distanceTo(new THREE.Vector3(edges.l.x, 0, 0)) < 3) { snap(sel, 'l'); played = true; }
+
+            if(played) {
+                playerHand = playerHand.filter(t => t !== sel);
+                document.getElementById('p-count').innerText = playerHand.length;
+                playStoneClack(); isPlayerTurn = false; aiTurn();
+            } else {
+                sel.position.set(sel.userData.ox, 0.2, sel.userData.oz);
+            }
+            sel.position.y = 0.2; sel = null;
+        });
+
+        function snap(t, side) {
+            const isD = t.userData.isD; const target = edges[side];
+            t.position.set(side==='r' ? target.x+(isD?0.6:1.1) : target.x-(isD?0.6:1.1), 0.2, 0);
+            t.rotation.y = isD ? 0 : Math.PI/2;
+            target.v = (t.userData.v1 === target.v) ? t.userData.v2 : t.userData.v1;
+            target.x = t.position.x + (side==='r' ? (isD?0.5:1) : (isD?-0.5:-1));
+            t.userData.owner = 'board';
+        }
+
+        function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); }
+        animate();
+    </script>
+</body>
+</html>
