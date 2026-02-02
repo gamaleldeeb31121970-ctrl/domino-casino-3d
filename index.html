@@ -1,1 +1,150 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Domino Master - Full Set</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #031006; font-family: sans-serif; }
+        #ui-layer { position: absolute; top: 10px; width: 100%; display: flex; justify-content: space-between; padding: 0 15px; box-sizing: border-box; z-index: 100; pointer-events: none; }
+        .pill { background: rgba(0,0,0,0.8); color: #ffcc00; padding: 6px 15px; border-radius: 20px; border: 1px solid #ffd700; font-size: 13px; font-weight: bold; }
+        #msg { position: absolute; bottom: 140px; width: 100%; text-align: center; color: #fff; font-size: 14px; text-shadow: 1px 1px 2px #000; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div id="ui-layer">
+        <div class="pill">💰 28.5M</div>
+        <div id="turn-info" class="pill">دورك الآن</div>
+        <div class="pill">💸 1K</div>
+    </div>
+    <div id="msg">اسحب حجرًا لبدء اللعب</div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script>
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 18, 12);
+        camera.lookAt(0, -2, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.body.appendChild(renderer.domElement);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+        const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+        sun.position.set(5, 15, 5);
+        scene.add(sun);
+
+        // الطاولة الخضراء
+        const table = new THREE.Mesh(new THREE.PlaneGeometry(60, 40), new THREE.MeshStandardMaterial({ color: 0x125424 }));
+        table.rotation.x = -Math.PI / 2;
+        scene.add(table);
+
+        const T_WIDTH = 0.85, T_HEIGHT = 0.2, T_LENGTH = 1.7;
+        let playerHand = [], fullSet = [], selectedTile = null;
+        const raycaster = new THREE.Raycaster(), mouse = new THREE.Vector2();
+
+        // --- 1. توليد طقم الدومينو الكامل (28 حجر) ---
+        function generateFullSet() {
+            for (let i = 0; i <= 6; i++) {
+                for (let j = i; j <= 6; j++) {
+                    fullSet.push({ v1: i, v2: j });
+                }
+            }
+            // خلط الحجارة (Shuffle)
+            fullSet.sort(() => Math.random() - 0.5);
+        }
+
+        // --- 2. رسم النقاط بشكل احترافي ---
+        function createTile(x, z, v1, v2, isHand = false) {
+            const group = new THREE.Group();
+            const body = new THREE.Mesh(new THREE.BoxGeometry(T_WIDTH, T_HEIGHT, T_LENGTH), new THREE.MeshStandardMaterial({ color: 0xfefefe, roughness: 0.1 }));
+            group.add(body);
+            
+            const line = new THREE.Mesh(new THREE.PlaneGeometry(T_WIDTH - 0.1, 0.04), new THREE.MeshBasicMaterial({ color: 0x222 }));
+            line.rotation.x = -Math.PI/2; line.position.y = T_HEIGHT/2 + 0.005; group.add(line);
+
+            const dotGeo = new THREE.CircleGeometry(0.07, 12);
+            const dotMat = new THREE.MeshBasicMaterial({ color: 0x000 });
+
+            const getPositions = (val) => {
+                const p = [];
+                if (val % 2 !== 0) p.push([0, 0]); // نقطة الوسط
+                if (val >= 2) p.push([0.22, 0.22], [-0.22, -0.22]);
+                if (val >= 4) p.push([0.22, -0.22], [-0.22, 0.22]);
+                if (val === 6) p.push([0.22, 0], [-0.22, 0]);
+                return p;
+            };
+
+            const drawSide = (val, offsetZ) => {
+                const pos = getPositions(val);
+                pos.forEach(p => {
+                    const dot = new THREE.Mesh(dotGeo, dotMat);
+                    dot.rotation.x = -Math.PI / 2;
+                    dot.position.set(p[0], T_HEIGHT / 2 + 0.01, offsetZ + p[1]);
+                    group.add(dot);
+                });
+            };
+
+            drawSide(v1, 0.42); drawSide(v2, -0.42);
+
+            group.position.set(x, T_HEIGHT/2, z);
+            group.userData = { v1, v2, isHand, originalX: x, originalZ: z };
+            scene.add(group);
+            if(isHand) playerHand.push(group);
+            return group;
+        }
+
+        // إعداد اللعبة
+        generateFullSet();
+        
+        // توزيع 7 حجارة للاعب من الطقم
+        for(let i=0; i<7; i++) {
+            const data = fullSet.pop();
+            createTile(-3.6 + (i * 1.2), 6.5, data.v1, data.v2, true);
+        }
+
+        // وضع حجر البداية في السنتر (أول حجر متبقي من الطقم)
+        const startTile = fullSet.pop();
+        createTile(0, 0, startTile.v1, startTile.v2, false);
+
+        // --- 3. التحكم بالحركة ---
+        window.addEventListener('touchstart', e => {
+            mouse.x = (e.touches[0].clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.touches[0].clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(playerHand, true);
+            if (intersects.length > 0) {
+                let obj = intersects[0].object;
+                while(obj.parent && obj.type !== 'Group') obj = obj.parent;
+                selectedTile = obj;
+                selectedTile.position.y = 1.2;
+            }
+        });
+
+        window.addEventListener('touchmove', e => {
+            if (!selectedTile) return;
+            mouse.x = (e.touches[0].clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.touches[0].clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersectTable = raycaster.intersectObject(table);
+            if (intersectTable.length > 0) {
+                selectedTile.position.set(intersectTable[0].point.x, 0.8, intersectTable[0].point.z);
+            }
+        });
+
+        window.addEventListener('touchend', () => {
+            if (selectedTile) {
+                // العودة للمكان الأصلي مؤقتاً (منطق الالتصاق والقواعد مدمج في الخطوة السابقة)
+                selectedTile.position.set(selectedTile.userData.originalX, T_HEIGHT/2, selectedTile.userData.originalZ);
+                selectedTile = null;
+            }
+        });
+
+        function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); }
+        animate();
+    </script>
+</body>
+</html>
