@@ -1,1 +1,142 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Domino Pro - Interactive</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #041208; font-family: sans-serif; }
+        #ui-layer {
+            position: absolute; top: 10px; width: 100%;
+            display: flex; justify-content: space-between; padding: 0 15px;
+            box-sizing: border-box; z-index: 100; pointer-events: none;
+        }
+        .pill { background: rgba(0,0,0,0.8); color: #ffcc00; padding: 5px 12px; border-radius: 15px; border: 1px solid #ffd700; font-size: 12px; }
+        #msg { position: absolute; bottom: 100px; width: 100%; text-align: center; color: white; font-weight: bold; pointer-events: none; }
+    </style>
+</head>
+<body>
 
+    <div id="ui-layer">
+        <div class="pill">💰 28.5M</div>
+        <div id="turn-info" class="pill">دورك الآن</div>
+        <div class="pill">💸 1K</div>
+    </div>
+    <div id="msg">اسحب حجر لتبدأ اللعب</div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <script>
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 15, 12);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.body.appendChild(renderer.domElement);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+        const light = new THREE.PointLight(0xffffff, 1);
+        light.position.set(0, 10, 5);
+        scene.add(light);
+
+        // الطاولة
+        const table = new THREE.Mesh(
+            new THREE.PlaneGeometry(30, 20),
+            new THREE.MeshStandardMaterial({ color: 0x155d27 })
+        );
+        table.rotation.x = -Math.PI / 2;
+        scene.add(table);
+
+        // مصفوفة الحجارة القابلة للتفاعل
+        let playerHand = [];
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        let selectedTile = null;
+
+        // دالة صنع الحجر (نفس دالتك السابقة مع إضافة اسم للتعريف)
+        function createTile(x, z, v1, v2, isHand = false) {
+            const group = new THREE.Group();
+            const body = new THREE.Mesh(
+                new THREE.BoxGeometry(1.2, 0.3, 2.2),
+                new THREE.MeshStandardMaterial({ color: 0xfafafa })
+            );
+            group.add(body);
+            
+            // إضافة الخط والنقاط (تبسيطاً سأضيف الخط فقط هنا لسرعة الكود)
+            const line = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 0.05), new THREE.MeshBasicMaterial({color:0x000}));
+            line.rotation.x = -Math.PI/2; line.position.y = 0.16;
+            group.add(line);
+
+            group.position.set(x, 0.2, z);
+            group.userData = { v1, v2, isHand }; // تخزين بيانات الحجر
+            scene.add(group);
+            if(isHand) playerHand.push(group);
+            return group;
+        }
+
+        // توزيع اليد (7 حجارة)
+        for(let i=0; i<7; i++) {
+            createTile(-4.5 + (i * 1.5), 6, Math.floor(Math.random()*7), Math.floor(Math.random()*7), true);
+        }
+
+        // --- نظام السحب باللمس للموبايل ---
+        
+        window.addEventListener('touchstart', onTouchStart, false);
+        window.addEventListener('touchmove', onTouchMove, false);
+        window.addEventListener('touchend', onTouchEnd, false);
+
+        function onTouchStart(event) {
+            const touch = event.touches[0];
+            mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(playerHand, true);
+
+            if (intersects.length > 0) {
+                // العثور على الـ Group الأب للحجر الملموس
+                let obj = intersects[0].object;
+                while(obj.parent && obj.type !== 'Group') obj = obj.parent;
+                selectedTile = obj;
+                document.getElementById('msg').innerText = "جاري تحريك الحجر...";
+            }
+        }
+
+        function onTouchMove(event) {
+            if (!selectedTile) return;
+            const touch = event.touches[0];
+            mouse.x = (touch.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(touch.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersectTable = raycaster.intersectObject(table);
+
+            if (intersectTable.length > 0) {
+                const pt = intersectTable[0].point;
+                selectedTile.position.set(pt.x, 0.5, pt.z); // تحريك الحجر مع الصباع
+            }
+        }
+
+        function onTouchEnd() {
+            if (selectedTile) {
+                // هنا مستقبلاً هنضيف منطق: هل المكان ده ينفع يرمي فيه ولا يرجع مكانه؟
+                if (selectedTile.position.z > 4) {
+                    // يرجعه مكانه لو مرموش في نص الطاولة
+                    selectedTile.position.y = 0.2; 
+                }
+                selectedTile = null;
+                document.getElementById('msg').innerText = "اسحب حجر لتبدأ اللعب";
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
