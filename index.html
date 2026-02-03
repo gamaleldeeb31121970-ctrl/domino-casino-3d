@@ -1,1 +1,204 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Domino Casino 3D</title>
+
+<style>
+html,body{
+  margin:0;
+  padding:0;
+  overflow:hidden;
+  background:#042b14;
+  touch-action:none;
+  user-select:none;
+  font-family:system-ui;
+}
+#msg{
+  position:fixed;
+  bottom:5%;
+  width:100%;
+  text-align:center;
+  color:#fff;
+  font-size:18px;
+  font-weight:bold;
+  text-shadow:0 2px 6px #000;
+  z-index:10;
+}
+</style>
+</head>
+
+<body>
+<div id="msg">اسحب الحجر وحطه على الطاولة</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.152.2/examples/js/geometries/RoundedBoxGeometry.js"></script>
+
+<script>
+/* ================= إعداد ================= */
+const isMobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x042b14);
+
+const camera = new THREE.PerspectiveCamera(
+  isMobile ? 50 : 35,
+  innerWidth/innerHeight,
+  0.1,100
+);
+camera.position.set(0,14,10);
+camera.lookAt(0,0,0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true;
+document.body.appendChild(renderer.domElement);
+
+/* ================= إضاءة ================= */
+scene.add(new THREE.HemisphereLight(0xffffff,0x222222,0.8));
+const sun = new THREE.DirectionalLight(0xffffff,1.2);
+sun.position.set(6,15,8);
+sun.castShadow=true;
+scene.add(sun);
+
+/* ================= طاولة ================= */
+const table = new THREE.Mesh(
+  new THREE.BoxGeometry(40,0.6,28),
+  new THREE.MeshStandardMaterial({color:0x0b3f1f,roughness:0.9})
+);
+table.receiveShadow=true;
+table.position.y=-0.3;
+scene.add(table);
+
+/* ================= حجر دومينو احترافي ================= */
+function domino(a,b){
+  const g = new THREE.Group();
+
+  const body = new THREE.Mesh(
+    new THREE.RoundedBoxGeometry(1.2,0.5,2.4,10,0.16),
+    new THREE.MeshStandardMaterial({
+      color:0xf7f6ee,
+      roughness:0.15,
+      metalness:0.05
+    })
+  );
+  body.castShadow=true;
+  g.add(body);
+
+  const line = new THREE.Mesh(
+    new THREE.BoxGeometry(1.05,0.02,0.05),
+    new THREE.MeshStandardMaterial({color:0x000000})
+  );
+  line.position.y=0.26;
+  g.add(line);
+
+  const pin = new THREE.Mesh(
+    new THREE.SphereGeometry(0.08,16,16),
+    new THREE.MeshStandardMaterial({color:0xffd700,metalness:1,roughness:0.2})
+  );
+  pin.position.y=0.28;
+  g.add(pin);
+
+  function pips(v,z){
+    const d=0.35;
+    const map=[
+      [],
+      [[0,0]],
+      [[d,d],[-d,-d]],
+      [[0,0],[d,d],[-d,-d]],
+      [[d,d],[-d,-d],[-d,d],[d,-d]],
+      [[0,0],[d,d],[-d,-d],[-d,d],[d,-d]],
+      [[d,0],[-d,0],[d,d],[-d,-d],[-d,d],[d,-d]]
+    ][v];
+    map.forEach(p=>{
+      const s=new THREE.Mesh(
+        new THREE.SphereGeometry(0.1,12,12),
+        new THREE.MeshStandardMaterial({color:0x111111})
+      );
+      s.position.set(p[0],0.25,z+p[1]);
+      g.add(s);
+    });
+  }
+  pips(a,0.6); pips(b,-0.6);
+
+  g.userData={a,b};
+  return g;
+}
+
+/* ================= توزيع ================= */
+const hand=[];
+for(let i=0;i<7;i++){
+  const t=domino(i,i);
+  t.position.set(-4+i*1.3,0.25,8);
+  scene.add(t);
+  hand.push(t);
+}
+
+const first=domino(6,6);
+scene.add(first);
+
+/* ================= لمس وسحب ================= */
+let selected=null;
+const ray=new THREE.Raycaster();
+const mouse=new THREE.Vector2();
+const plane=new THREE.Plane(new THREE.Vector3(0,1,0),-0.25);
+
+function pick(x,y){
+  mouse.x=(x/innerWidth)*2-1;
+  mouse.y=-(y/innerHeight)*2+1;
+  ray.setFromCamera(mouse,camera);
+  return ray.intersectObjects(hand,true);
+}
+
+addEventListener(isMobile?'touchstart':'mousedown',e=>{
+  const p=isMobile?e.touches[0]:e;
+  const hit=pick(p.clientX,p.clientY);
+  if(hit.length){
+    selected=hit[0].object.parent;
+    selected.position.y=0.8;
+  }
+});
+
+addEventListener(isMobile?'touchmove':'mousemove',e=>{
+  if(!selected)return;
+  const p=isMobile?e.touches[0]:e;
+  mouse.x=(p.clientX/innerWidth)*2-1;
+  mouse.y=-(p.clientY/innerHeight)*2+1;
+  ray.setFromCamera(mouse,camera);
+  const pos=new THREE.Vector3();
+  ray.ray.intersectPlane(plane,pos);
+  selected.position.copy(pos);
+});
+
+addEventListener(isMobile?'touchend':'mouseup',()=>{
+  if(!selected)return;
+  const target=new THREE.Vector3(0,0.25,0);
+  function snap(){
+    selected.position.lerp(target,0.25);
+    if(selected.position.distanceTo(target)>0.01){
+      requestAnimationFrame(snap);
+    }else{
+      selected.position.copy(target);
+    }
+  }
+  snap();
+  selected=null;
+});
+
+/* ================= رندر ================= */
+function loop(){
+  requestAnimationFrame(loop);
+  renderer.render(scene,camera);
+}
+loop();
+
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
 
